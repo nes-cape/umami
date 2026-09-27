@@ -540,6 +540,15 @@ function getSchema() {
   return connectionUrl.searchParams.get('schema');
 }
 
+function poolConfig(connectionString: string) {
+  // DATABASE_POOL_MAX caps the pg pool per instance (default 10). Needed for
+  // databases without a pooler and a low connection limit (e.g. Aiven free/
+  // developer: 15-20), since a URL `connection_limit` is ignored by driver adapters.
+  const max = Number(process.env.DATABASE_POOL_MAX);
+
+  return Number.isInteger(max) && max > 0 ? { connectionString, max } : { connectionString };
+}
+
 function getClient() {
   const url = process.env.DATABASE_URL;
   const replicaUrl = process.env.DATABASE_REPLICA_URL;
@@ -551,7 +560,7 @@ function getClient() {
 
   const schema = getSchema();
 
-  const baseAdapter = new PrismaPg({ connectionString: url }, { schema });
+  const baseAdapter = new PrismaPg(poolConfig(url), { schema });
 
   const baseClient = new PrismaClient({
     adapter: baseAdapter,
@@ -569,7 +578,7 @@ function getClient() {
     return baseClient;
   }
 
-  const replicaAdapter = new PrismaPg({ connectionString: replicaUrl }, { schema });
+  const replicaAdapter = new PrismaPg(poolConfig(replicaUrl), { schema });
 
   const replicaClient = new PrismaClient({
     adapter: replicaAdapter,
