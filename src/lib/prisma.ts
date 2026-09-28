@@ -1,6 +1,8 @@
 import { PrismaPg } from '@prisma/adapter-pg';
 import { readReplicas } from '@prisma/extension-read-replicas';
+import { attachDatabasePool } from '@vercel/functions';
 import debug from 'debug';
+import { Pool } from 'pg';
 import { PrismaClient } from '@/generated/prisma/client';
 import {
   DATA_TYPE,
@@ -540,13 +542,32 @@ function getSchema() {
   return connectionUrl.searchParams.get('schema');
 }
 
-function poolConfig(connectionString: string) {
-  // DATABASE_POOL_MAX caps the pg pool per instance (default 10). Needed for
-  // databases without a pooler and a low connection limit (e.g. Aiven free/
-  // developer: 15-20), since a URL `connection_limit` is ignored by driver adapters.
+function createPool(connectionString: string) {
+  // The pg pool is created here (not inside PrismaPg) so it can be handed to
+  // Vercel's attachDatabasePool: on Fluid compute an instance is frozen right
+  // after the response, so the pool's idle timer never fires and idle
+  // connections linger on the database until TCP keepalive gives up. The
+  // helper releases idle clients before the instance suspends.
+  // DATABASE_POOL_MAX caps connections per instance (pg default 10); needed
+  // for databases without a pooler and a low connection limit (e.g. Aiven
+  // free/developer: 15-20). A URL `connection_limit` is ignored by driver
+  // adapters. DATABASE_POOL_IDLE_MS closes idle clients sooner (default 5 s).
   const max = Number(process.env.DATABASE_POOL_MAX);
+  const idleTimeoutMillis = Number(process.env.DATABASE_POOL_IDLE_MS);
 
-  return Number.isInteger(max) && max > 0 ? { connectionString, max } : { connectionString };
+  const pool = new Pool({
+    connectionString,
+    application_name: 'umami',
+    idleTimeoutMillis:
+      Number.isInteger(idleTimeoutMillis) && idleTimeoutMillis > 0 ? idleTimeoutMillis : 5000,
+    ...(Number.isInteger(max) && max > 0 ? { max } : {}),
+  });
+
+  if (process.env.VERCEL) {
+    attachDatabasePool(pool);
+  }
+
+  return pool;
 }
 
 function getClient() {
@@ -560,7 +581,7 @@ function getClient() {
 
   const schema = getSchema();
 
-  const baseAdapter = new PrismaPg(poolConfig(url), { schema });
+  const baseAdapter = new PrismaPg(createPool(url), { schema });
 
   const baseClient = new PrismaClient({
     adapter: baseAdapter,
@@ -578,7 +599,7 @@ function getClient() {
     return baseClient;
   }
 
-  const replicaAdapter = new PrismaPg(poolConfig(replicaUrl), { schema });
+  const replicaAdapter = new PrismaPg(createPool(replicaUrl), { schema });
 
   const replicaClient = new PrismaClient({
     adapter: replicaAdapter,
