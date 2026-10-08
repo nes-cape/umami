@@ -392,12 +392,14 @@ export const EMAIL_DOMAINS = [
 
 export const VIDEO_DOMAINS = ['twitch.', 'youtube.'];
 
+// fbclid staat hier bewust niet in: Facebook hangt die code aan élke uitgaande
+// klik (ook gedeelde posts en Messenger), waardoor gewone deelkliks als
+// advertentie telden. Meta-advertenties herken je aan utm_medium=paid/paid_social.
 export const PAID_AD_PARAMS = [
   'ad_id=',
   'aid=',
   'dclid=',
   'epik=',
-  'fbclid=',
   'gclid=',
   'li_fat_id=',
   'msclkid=',
