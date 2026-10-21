@@ -54,8 +54,22 @@ async function relationalQuery(websiteId: string, filters: QueryFilters) {
         ${dateQuery}
         ${filterQuery}),
 
-    channels as (
-      select case
+    -- Fork (nes-cape): rijen met de eigen site als verwijzer en zonder query of
+    -- utm leveren in de case hieronder altijd '' op. Ze vallen vooraf weg, zodat
+    -- alleen rijen die een kanaal kunnen opleveren geclassificeerd en gesorteerd
+    -- worden; bezoeken zonder zo'n rij tellen zoals voorheen als 'direct'.
+    -- De case zelf loopt één keer per unieke combinatie in plaats van per rij.
+    extern as (
+      select *,
+        concat_ws(chr(31), prefix, coalesce(referrer_domain, chr(30)), coalesce(url_query, chr(30)),
+          coalesce(utm_medium, chr(30)), coalesce(utm_source, chr(30)), coalesce(hostname, chr(30))) as sleutel
+      from prefix
+      where not coalesce(referrer_domain = regexp_replace(hostname, '^www.', '')
+        and coalesce(url_query, '') = '' and utm_medium is null and utm_source is null, false)),
+
+    soorten as (
+      select sleutel,
+        case
           when referrer_domain = '' and url_query = '' then 'direct'
           when ${toPostgresLikeClause('url_query', PAID_AD_PARAMS)} then 'paidAds'
           when ${toPostgresLikeClause('utm_medium', ['referral', 'app', 'link'])} then 'referral'
@@ -68,30 +82,27 @@ async function relationalQuery(websiteId: string, filters: QueryFilters) {
           when ${toPostgresLikeClause('referrer_domain', SHOPPING_DOMAINS)} or utm_medium ilike '%shop%' then concat(prefix, 'Shopping')
           when ${toPostgresLikeClause('referrer_domain', VIDEO_DOMAINS)} or utm_medium ilike '%video%' then concat(prefix, 'Video')
           when referrer_domain != regexp_replace(hostname, '^www.', '') and referrer_domain != '' then 'referral'
-          else '' end AS x,
-          session_id,
-          visit_id,
-          event_id,
-          created_at
-      from prefix),
+          else '' end AS x
+      from (
+        select distinct on (sleutel) sleutel, prefix, referrer_domain, url_query, utm_medium, utm_source, hostname
+        from extern) as combinaties),
+
+    eerste as (
+      select distinct on (extern.session_id, extern.visit_id)
+        extern.session_id, extern.visit_id, soorten.x
+      from extern
+      join soorten on soorten.sleutel = extern.sleutel
+      where soorten.x != ''
+      order by extern.session_id, extern.visit_id, extern.created_at, extern.event_id),
 
     visit_channels as (
-      select
-        session_id,
-        visit_id,
-        coalesce(nullif(x, ''), 'direct') as x
-      from (
-        select
-          x,
-          session_id,
-          visit_id,
-          row_number() over (
-            partition by session_id, visit_id
-            order by case when x != '' then 0 else 1 end, created_at, event_id
-          ) as row_num
-        from channels
-      ) as ranked_channels
-      where row_num = 1)
+      select session_id, visit_id, x from eerste
+      union all
+      select bezoek.session_id, bezoek.visit_id, 'direct'
+      from (select distinct session_id, visit_id from prefix) as bezoek
+      where not exists (
+        select 1 from eerste
+        where eerste.session_id = bezoek.session_id and eerste.visit_id = bezoek.visit_id))
 
     select x, count(distinct session_id) y
     from visit_channels
