@@ -128,9 +128,7 @@ model WebsiteEvent {
   @@index([sessionId])
   @@index([websiteId])
   @@index([websiteId, createdAt])
-  @@index([websiteId, createdAt, referrerDomain])
   @@index([websiteId, sessionId, createdAt])
-  @@index([websiteId, createdAt, hostname])
   @@map("website_event")
 }
 
