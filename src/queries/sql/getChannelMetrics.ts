@@ -57,6 +57,12 @@ async function relationalQuery(websiteId: string, filters: QueryFilters) {
     channels as (
       select case
           when referrer_domain = '' and url_query = '' then 'direct'
+          -- Interne navigatie (verwijzer is de eigen host, geen query, geen utm)
+          -- eindigt verderop altijd op '' en is ruim de helft van de rijen; hier
+          -- afvangen scheelt die rijen de ~90 ilike-vergelijkingen eronder
+          -- (stats.nssense.be, 30 dagen Deruddere: 44 s naar 15 s, zelfde uitkomst).
+          when referrer_domain = regexp_replace(hostname, '^www.', '') and url_query = ''
+            and coalesce(utm_medium, '') = '' and coalesce(utm_source, '') = '' then ''
           when ${toPostgresLikeClause('url_query', PAID_AD_PARAMS)} then 'paidAds'
           when ${toPostgresLikeClause('utm_medium', ['referral', 'app', 'link'])} then 'referral'
           when utm_medium ilike '%affiliate%' then 'affiliate'
